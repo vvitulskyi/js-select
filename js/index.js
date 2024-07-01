@@ -21,7 +21,7 @@ class Select {
     this.reachedLimit = false;
     this.searchTimeout = null;
     this.selectedOption = null;
-    this.previousSearch = "";
+    this.prevWhere = "";
   }
 
   get value() {
@@ -239,6 +239,10 @@ class Select {
       return;
     }
 
+    if (this.prevWhere && this.prevWhere == searchParams.where) {
+      return;
+    }
+
     try {
       this.#startLoading();
       const url = new URL(this.url);
@@ -282,6 +286,7 @@ class Select {
       }
 
       optionsWrapper.append(...optionsList);
+      this.prevWhere = searchParams.where;
       this.#endLoading();
     } catch (error) {
       alert(
