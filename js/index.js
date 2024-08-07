@@ -2,35 +2,50 @@ class Select {
   constructor({
     selectWrapper,
     fetchUrl,
+    fetchOptions,
     defaultSearchParams,
     searchParameter,
-    onChange,
+    displayedOptions = 100,
+    onChange = (option) => console.log(option),
+    formattingOptions = (o) => o,
   }) {
-    this.oprionsWrapperSelector = ".js-select-options";
-    this.inputSelector = ".js-search-input-wrapper input[type=text]";
-    this.chevronSelector = ".js-chevron";
-
     this.select = selectWrapper;
-    this.url = fetchUrl;
+    this.fetchUrl = fetchUrl;
+    this.fetchOptions = fetchOptions;
     this.defaultSearchParams = defaultSearchParams;
     this.searchParameter = searchParameter;
+    this.displayedOptions = displayedOptions;
     this.onChange = onChange;
+    this.formattingOptions = formattingOptions;
 
-    this.skip = 0;
     this.loading = false;
     this.reachedLimit = false;
-    this.searchTimeout = null;
     this.selectedOption = null;
-    this.prevWhere = "";
   }
+
+  #oprionsWrapperSelectorHigh = ".js-select-options-wrapper";
+  #oprionsWrapperSelector = ".js-select-options";
+  #optionsHelperTop = ".js-select-options-top";
+  #optionsHelperBot = ".js-select-options-bottom";
+  #inputSelector = ".js-search-input-wrapper input[type=text]";
+  #chevronSelector = ".js-chevron";
+
+  #lastScrollTop = 0;
+  #skip = 0;
+  #optionHeight = 0;
+  #lastWhere = "";
+  #searchTimeout = null;
+  #scrollTimeout = null;
+  #loadedOptions = [];
 
   get value() {
     return this.selectedOption;
   }
 
-  init = () => {
-    this.#fetchData(this.defaultSearchParams);
+  init = async () => {
+    await this.#fetchData(this.defaultSearchParams);
     this.addEvents();
+    this.#showingOptions();
   };
 
   addEvents = () => {
@@ -44,15 +59,15 @@ class Select {
       .addEventListener("click", this.#toggleList);
 
     this.select
-      .querySelector(this.inputSelector)
+      .querySelector(this.#inputSelector)
       .addEventListener("input", this.#changeInputHandler);
 
     this.select
-      .querySelector(this.oprionsWrapperSelector)
+      .querySelector(this.#oprionsWrapperSelectorHigh)
       .addEventListener("scroll", this.#scrollOptionsListHandler);
 
     this.select
-      .querySelector(this.oprionsWrapperSelector)
+      .querySelector(this.#oprionsWrapperSelector)
       .addEventListener("click", this.#selectOptionHandler);
   };
 
@@ -67,15 +82,15 @@ class Select {
       .removeEventListener("click", this.#toggleList);
 
     this.select
-      .querySelector(this.inputSelector)
+      .querySelector(this.#inputSelector)
       .removeEventListener("input", this.#changeInputHandler);
 
     this.select
-      .querySelector(this.oprionsWrapperSelector)
+      .querySelector(this.#oprionsWrapperSelectorHigh)
       .removeEventListener("scroll", this.#scrollOptionsListHandler);
 
     this.select
-      .querySelector(this.oprionsWrapperSelector)
+      .querySelector(this.#oprionsWrapperSelector)
       .removeEventListener("click", this.#selectOptionHandler);
   };
 
@@ -88,7 +103,7 @@ class Select {
       });
 
       const selected = this.select.querySelector(
-        `${this.oprionsWrapperSelector} .selected`
+        `${this.#oprionsWrapperSelector} .selected`
       );
       if (selected) {
         selected.classList.remove("selected");
@@ -112,7 +127,7 @@ class Select {
         e.preventDefault();
         if (e.target.tagName == "INPUT") {
           this.select
-            .querySelector(this.oprionsWrapperSelector)
+            .querySelector(this.#oprionsWrapperSelector)
             .children[0].focus();
           return;
         }
@@ -127,7 +142,7 @@ class Select {
   };
 
   #focusInHandler = (e) => {
-    if (e.target != this.select.querySelector(this.chevronSelector)) {
+    if (e.target != this.select.querySelector(this.#chevronSelector)) {
       this.#showList();
     }
   };
@@ -140,10 +155,10 @@ class Select {
   };
 
   #changeInputHandler = () => {
-    this.skip = 0;
+    this.#skip = 0;
     this.reachedLimit = false;
-    clearTimeout(this.searchTimeout);
-    this.searchTimeout = setTimeout(() => {
+    clearTimeout(this.#searchTimeout);
+    this.#searchTimeout = setTimeout(() => {
       const whereParam = this.#getWhereParam();
       this.#fetchData(
         {
@@ -155,15 +170,23 @@ class Select {
     }, 500);
   };
 
-  #scrollOptionsListHandler = () => {
+  #scrollOptionsListHandler = (e) => {
     if (this.#isScrolledToEnd() && !this.loading) {
-      this.skip += this.defaultSearchParams.limit;
+      this.#skip += this.defaultSearchParams.limit;
       const whereParam = this.#getWhereParam();
       this.#fetchData({
         ...this.defaultSearchParams,
-        skip: this.skip,
+        skip: this.#skip,
         ...(whereParam ? { where: whereParam } : null),
       });
+    }
+
+    if (!this.#scrollTimeout) {
+      this.#scrollTimeout = setTimeout(() => {
+        this.#showingOptions();
+        clearTimeout(this.#scrollTimeout);
+        this.#scrollTimeout = null;
+      }, 1000);
     }
   };
 
@@ -177,29 +200,32 @@ class Select {
   #setInputValue = () => {
     if (
       this.selectedOption &&
-      this.select.querySelector(this.inputSelector).value !=
+      this.select.querySelector(this.#inputSelector).value !=
         this.selectedOption.label
     ) {
-      this.select.querySelector(this.inputSelector).value =
+      this.select.querySelector(this.#inputSelector).value =
         this.selectedOption.label;
     }
   };
 
   #isScrolledToEnd = () => {
-    const list = this.select.querySelector(this.oprionsWrapperSelector);
-    return list.scrollTop + list.clientHeight * 3 > list.scrollHeight;
+    const list = this.select.querySelector(this.#oprionsWrapperSelectorHigh);
+    return (
+      list.scrollTop + this.#optionHeight * (this.displayedOptions / 2) >
+        list.scrollHeight && !this.reachedLimit
+    );
   };
 
   #nextFocus = (next, e) => {
     if (!next) {
-      this.select.querySelector(this.inputSelector).focus();
+      this.select.querySelector(this.#inputSelector).focus();
       return;
     }
     next.focus();
   };
 
   #getWhereParam() {
-    const inputVal = this.select.querySelector(this.inputSelector).value;
+    const inputVal = this.select.querySelector(this.#inputSelector).value;
     if (!inputVal) {
       return null;
     }
@@ -215,7 +241,7 @@ class Select {
   };
 
   #hideList = () => {
-    this.select.classList.remove("opened");
+    // this.select.classList.remove("opened");
   };
 
   #toggleList = () => {
@@ -239,77 +265,184 @@ class Select {
       return;
     }
 
-    if (this.prevWhere && this.prevWhere == searchParams.where) {
+    if (this.#lastWhere && this.#lastWhere == searchParams.where) {
       return;
     }
 
+    this.#startLoading();
+    const fetchUrl = new URL(this.fetchUrl);
+
+    Object.keys(searchParams).forEach((key) => {
+      fetchUrl.searchParams.append(key, searchParams[key]);
+    });
+
+    let result = null;
+
     try {
-      this.#startLoading();
-      const url = new URL(this.url);
-
-      Object.keys(searchParams).forEach((key) => {
-        url.searchParams.append(key, searchParams[key]);
-      });
-
-      const response = await fetch(url, {
-        headers: {
-          "X-Parse-Application-Id": "zsSkPsDYTc2hmphLjjs9hz2Q3EXmnSxUyXnouj1I", // This is the fake app's application id
-          "X-Parse-Master-Key": "4LuCXgPPXXO2sU5cXm6WwpwzaKyZpo3Wpj4G4xXK", // This is the fake app's readonly master key
-        },
-      });
-      const { results } = await response.json(); // Here you have the data that you need
-
-      const optionsWrapper = this.select.querySelector(
-        this.oprionsWrapperSelector
-      );
-
-      if (results.length < searchParams.limit) {
-        this.reachedLimit = true;
-      }
-
-      if (results.length == 0) {
-        optionsWrapper.innerHTML = "Names not found. :(";
-        this.#endLoading();
-        return;
-      }
-
-      const optionsList = results.map((o) => {
-        const listItem = document.createElement("li");
-        listItem.textContent = o[this.searchParameter];
-        listItem.dataset.value = o.objectId;
-        listItem.setAttribute("tabindex", "0");
-        return listItem;
-      });
-
-      if (reset) {
-        optionsWrapper.innerHTML = "";
-      }
-
-      optionsWrapper.append(...optionsList);
-      this.prevWhere = searchParams.where;
-      this.#endLoading();
+      const response = await fetch(fetchUrl, this.fetchOptions);
+      result = await response.json(); // Here you have the data that you need
     } catch (error) {
       alert(
         "Error receiving a response from the server. Please try again later..."
       );
       console.log(error);
     }
+
+    const optionsWrapper = this.select.querySelector(
+      this.#oprionsWrapperSelector
+    );
+
+    const newOptions = this.formattingOptions(result);
+
+    if (newOptions.length < searchParams.limit) {
+      this.reachedLimit = true;
+    }
+
+    if (newOptions.length == 0) {
+      optionsWrapper.innerHTML = "Names not found. :(";
+      this.#endLoading();
+      return;
+    }
+
+    if (reset || !this.#loadedOptions.length) {
+      this.#loadedOptions = newOptions;
+      const optionsList = this.#loadedOptions
+        .slice(0, this.displayedOptions)
+        .map((o) => {
+          const listItem = document.createElement("li");
+          listItem.textContent = o.label;
+          listItem.dataset.value = o.value;
+          listItem.setAttribute("tabindex", "0");
+          return listItem;
+        });
+
+      optionsWrapper.innerHTML = "";
+      optionsWrapper.append(...optionsList);
+    } else {
+      this.#loadedOptions.push(...newOptions);
+    }
+
+    if (!this.#optionHeight && optionsWrapper.querySelector("li")) {
+      this.#optionHeight = optionsWrapper
+        .querySelector("li")
+        .getBoundingClientRect().height;
+    }
+
+    this.#lastWhere = searchParams.where;
+
+    this.#endLoading();
+  };
+
+  get #scrollTop() {
+    const list = this.select.querySelector(this.#oprionsWrapperSelectorHigh);
+    const { scrollTop } = list;
+    return scrollTop;
+  }
+
+  #showingOptions = () => {
+    const scrollTop = this.#scrollTop;
+    if (this.#lastScrollTop == scrollTop) return;
+    this.#lastScrollTop = scrollTop;
+    const scrollHeight = this.#loadedOptions.length * this.#optionHeight; // Full haight PX
+    const listHeight = this.displayedOptions * this.#optionHeight; // List haigth PX
+    const half = listHeight / 2; // Options half PX
+    let topBlockHeight = 0; // Height in PX
+    let offsetOps = 0; // Array offset in unit
+
+    console.log("scrollHeight", scrollTop, half);
+
+    if (scrollTop > half) {
+      offsetOps = Math.round((scrollTop - half) / this.#optionHeight);
+      topBlockHeight = scrollTop - half;
+    }
+
+    let bottomBlockHeight =
+      scrollTop + listHeight < scrollHeight
+        ? scrollHeight - (listHeight + topBlockHeight)
+        : 0; // Height in PX
+
+    let nextOps = offsetOps + this.displayedOptions; // Array offset in unit
+
+    this.#updateList(
+      offsetOps,
+      nextOps,
+      topBlockHeight,
+      bottomBlockHeight,
+      scrollHeight
+    );
+
+    console.log(
+      "scroll status: ",
+      offsetOps, // +
+      nextOps, // +
+      topBlockHeight, // +
+      bottomBlockHeight, // +
+      scrollTop,
+      scrollHeight
+      // this.#loadedOptions.slice(offsetOpt, nextOps)
+    );
+  };
+
+  #updateList = (
+    offsetOps,
+    nextOps,
+    topBlockHeight,
+    bottomBlockHeight,
+    scrollHeight
+  ) => {
+    const optionsWrapper = this.select.querySelector(
+      this.#oprionsWrapperSelector
+    );
+
+    const optionsList = this.#loadedOptions
+      .slice(offsetOps, nextOps)
+      .map((o) => {
+        const listItem = document.createElement("li");
+        listItem.textContent = o.label;
+        listItem.dataset.value = o.value;
+        listItem.setAttribute("tabindex", "0");
+        return listItem;
+      });
+
+    optionsWrapper.innerHTML = "";
+    optionsWrapper.append(...optionsList);
+
+    this.select.querySelector(
+      this.#oprionsWrapperSelectorHigh
+    ).style.height = `${scrollHeight}px`;
+    this.select.querySelector(
+      this.#optionsHelperTop
+    ).style.height = `${topBlockHeight}px`;
+    this.select.querySelector(
+      this.#optionsHelperBot
+    ).style.height = `${bottomBlockHeight}px`;
+    console.log("updateList called");
   };
 }
 
 window.onload = () => {
-  const select = new Select({
+  window.select = new Select({
     selectWrapper: document.querySelector(".js-names-select"),
     fetchUrl: "https://parseapi.back4app.com/classes/Complete_List_Names",
+    fetchOptions: {
+      headers: {
+        "X-Parse-Application-Id": "zsSkPsDYTc2hmphLjjs9hz2Q3EXmnSxUyXnouj1I", // This is the fake app's application id
+        "X-Parse-Master-Key": "4LuCXgPPXXO2sU5cXm6WwpwzaKyZpo3Wpj4G4xXK", // This is the fake app's readonly master key
+      },
+    },
     defaultSearchParams: {
-      limit: 10000,
+      limit: 400,
       order: "Name",
       excludeKeys: "Genre",
     },
     searchParameter: "Name",
-    onChange: (option) => {
-      console.log(option);
+    displayedOptions: 100,
+    formattingOptions: (result) => {
+      if (!result || !result.results || !result.results.length) {
+        return [];
+      }
+      return result.results.map((o) => ({ label: o.Name, value: o.objectId }));
     },
   });
-  select.init();
+  window.select.init();
 };
